@@ -595,8 +595,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     # تنظیم پروکسی (در صورت نیاز)
-    proxy_url = 'socks5://127.0.0.1:1089/'  # جایگزین با آدرس پروکسی خود یا در صورت عدم نیاز، این خط را حذف کنید
-    request = HTTPXRequest(proxy_url=proxy_url)
+    proxy = 'socks5://127.0.0.1:1089/'  # جایگزین با آدرس پروکسی خود یا در صورت عدم نیاز، این خط را حذف کنید
+    request = HTTPXRequest(proxy=proxy)
 
     application = Application.builder().token(TOKEN).request(request).build()
 
