@@ -4,7 +4,9 @@ from telegram import (
     Update,
     KeyboardButton,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove
+    ReplyKeyboardRemove,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
 )
 from telegram.ext import (
     Application,
@@ -51,7 +53,7 @@ class User(Base):
     telegram_id = Column(Integer, unique=True, nullable=False)
     name = Column(String, nullable=False)
     family_name = Column(String, nullable=False)
-    country = Column(String, nullable=False)
+    country = Column(String, nullable=False)  # 'Iran' یا 'Turkey'
     phone = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
 
@@ -61,7 +63,7 @@ class BankAccount(Base):
     user_id = Column(Integer, nullable=False)
     account_number = Column(String, nullable=False)
     bank_name = Column(String, nullable=False)
-    country = Column(String, nullable=False)
+    country = Column(String, nullable=False)  # 'Iran' یا 'Turkey'
     is_verified = Column(Boolean, default=False)
 
 class Transaction(Base):
@@ -85,10 +87,10 @@ Base.metadata.create_all(engine)
 # تعریف مراحل ConversationHandler
 (
     NAME, FAMILY_NAME, COUNTRY, PHONE, ID_CARD,
-    SET_BUY_RATE, SET_SELL_RATE,
-    BANK_NAME, BANK_ACCOUNT_NUMBER,
-    AMOUNT
-) = range(10)
+    SELECT_TRANSACTION_TYPE, AMOUNT,
+    BANK_COUNTRY, BANK_NAME, BANK_ACCOUNT_NUMBER,
+    SET_BUY_RATE, SET_SELL_RATE
+) = range(12)
 
 def is_admin(user_id):
     return user_id in ADMIN_IDS
@@ -145,7 +147,7 @@ async def get_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         return COUNTRY
-    context.user_data['country'] = country
+    context.user_data['country'] = 'Iran' if country == "ایران" else 'Turkey'
     keyboard = [
         [KeyboardButton("ارسال شماره تلفن", request_contact=True)]
     ]
@@ -187,7 +189,7 @@ async def get_id_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await photo_file.download_to_drive(custom_path=photo_path)
     context.user_data['id_card'] = photo_path
     await update.message.reply_text("اطلاعات شما دریافت شد و در انتظار تأیید ادمین است.")
-    
+
     # ذخیره اطلاعات کاربر در دیتابیس
     user = User(
         telegram_id=user_id,
@@ -199,7 +201,7 @@ async def get_id_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     session.add(user)
     session.commit()
-    
+
     # اطلاع رسانی به ادمین‌ها
     for admin_id in ADMIN_IDS:
         await context.bot.send_message(
@@ -233,7 +235,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        ["خرید لیر", "فروش لیر"],
+        ["خرید و فروش لیر"],
         ["مدیریت حساب‌های بانکی"],
         ["تاریخچه تراکنش‌ها"],
         ["پشتیبانی"]
@@ -248,20 +250,38 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "خرید لیر":
+    user_id = update.effective_user.id
+    user = session.query(User).filter_by(telegram_id=user_id).first()
+
+    if not user:
+        await update.message.reply_text("لطفاً ابتدا فرآیند احراز هویت را تکمیل کنید با استفاده از دستور /start.")
+        return
+
+    if text == "خرید و فروش لیر":
+        # ارسال نرخ‌های فعلی به کاربر
+        settings = session.query(Settings).first()
+        if not settings:
+            await update.message.reply_text("نرخ‌ها تنظیم نشده‌اند. لطفاً بعداً تلاش کنید.")
+            return ConversationHandler.END
+
+        buy_rate = settings.buy_rate
+        sell_rate = settings.sell_rate
+
+        keyboard = [
+            [KeyboardButton("خرید لیر"), KeyboardButton("فروش لیر")],
+            ["بازگشت به منوی اصلی"]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
         await update.message.reply_text(
-            "لطفاً مقدار لیر که می‌خواهید بخرید را وارد کنید:",
-            reply_markup=ReplyKeyboardRemove()
+            f"نرخ‌های فعلی:\n"
+            f"خرید لیر: {buy_rate} تومان به ازای هر لیر\n"
+            f"فروش لیر: {sell_rate} تومان به ازای هر لیر\n\n"
+            f"لطفاً انتخاب کنید که می‌خواهید خرید کنید یا فروش.",
+            reply_markup=reply_markup
         )
-        context.user_data['transaction_type'] = 'buy'
-        return AMOUNT
-    elif text == "فروش لیر":
-        await update.message.reply_text(
-            "لطفاً مقدار لیر که می‌خواهید بفروشید را وارد کنید:",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        context.user_data['transaction_type'] = 'sell'
-        return AMOUNT
+        return SELECT_TRANSACTION_TYPE
+
     elif text == "مدیریت حساب‌های بانکی":
         await manage_bank_accounts(update, context)
         return ConversationHandler.END
@@ -270,24 +290,73 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     elif text == "پشتیبانی":
         await update.message.reply_text("برای پشتیبانی با ما تماس بگیرید: support@example.com")
-    elif text == "پنل مدیریت" and is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    elif text == "پنل مدیریت" and is_admin(user_id):
         await admin_panel(update, context)
-    elif text.startswith("تأیید کاربر") and is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    elif text.startswith("تأیید کاربر") and is_admin(user_id):
         try:
-            user_id = int(text.split()[-1])
-            await approve_user(user_id, context)
+            user_id_to_approve = int(text.split()[-1])
+            await approve_user(user_id_to_approve, context)
             await update.message.reply_text("کاربر تأیید شد.")
         except ValueError:
             await update.message.reply_text("فرآیند تأیید ناموفق بود.")
-    elif text.startswith("رد کاربر") and is_admin(update.effective_user.id):
+    elif text.startswith("رد کاربر") and is_admin(user_id):
         try:
-            user_id = int(text.split()[-1])
-            await reject_user(user_id, context)
+            user_id_to_reject = int(text.split()[-1])
+            await reject_user(user_id_to_reject, context)
             await update.message.reply_text("کاربر رد شد.")
         except ValueError:
             await update.message.reply_text("فرآیند رد ناموفق بود.")
     else:
-        await update.message.reply_text("دستور ناشناخته. لطفاً یکی از گزینه‌های منو را انتخاب کنید.")
+        # مدیریت انتخاب بعد از نمایش نرخ‌ها
+        if text == "خرید لیر":
+            # بررسی داشتن حساب بانکی ترکیه‌ای
+            turkey_accounts = session.query(BankAccount).filter_by(user_id=user.id, country='Turkey').all()
+            if not turkey_accounts:
+                await update.message.reply_text(
+                    "برای خرید لیر، شما باید حداقل یک حساب بانکی ترکیه‌ای داشته باشید.\n"
+                    "لطفاً حساب بانکی ترکیه‌ای خود را اضافه کنید."
+                )
+                await manage_bank_accounts(update, context)
+                return ConversationHandler.END
+            await update.message.reply_text(
+                "لطفاً مقدار لیر که می‌خواهید بخرید را وارد کنید:",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            context.user_data['transaction_type'] = 'buy'
+            return AMOUNT
+        elif text == "فروش لیر":
+            # بررسی داشتن حساب بانکی ایرانی
+            iran_accounts = session.query(BankAccount).filter_by(user_id=user.id, country='Iran').all()
+            if not iran_accounts:
+                await update.message.reply_text(
+                    "برای فروش لیر، شما باید حداقل یک حساب بانکی ایرانی داشته باشید.\n"
+                    "لطفاً حساب بانکی ایرانی خود را اضافه کنید."
+                )
+                await manage_bank_accounts(update, context)
+                return ConversationHandler.END
+            await update.message.reply_text(
+                "لطفاً مقدار لیر که می‌خواهید بفروشید را وارد کنید:",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            context.user_data['transaction_type'] = 'sell'
+            return AMOUNT
+        elif text == "افزودن حساب جدید":
+            await add_bank_account(update, context)
+            return BANK_COUNTRY
+        elif text == "تنظیم نرخ خرید" and is_admin(user_id):
+            await set_buy_rate(update, context)
+            return SET_BUY_RATE
+        elif text == "تنظیم نرخ فروش" and is_admin(user_id):
+            await set_sell_rate(update, context)
+            return SET_SELL_RATE
+        elif text == "بازگشت به منوی اصلی":
+            await main_menu(update, context)
+            return ConversationHandler.END
+        else:
+            await update.message.reply_text("دستور ناشناخته. لطفاً یکی از گزینه‌های منو را انتخاب کنید.")
+    return ConversationHandler.END
 
 async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     amount_text = update.message.text.strip()
@@ -299,9 +368,12 @@ async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         transaction_type = context.user_data['transaction_type']
         settings = session.query(Settings).first()
         if not settings:
-            settings = Settings()
-            session.add(settings)
-            session.commit()
+            await update.message.reply_text("نرخ‌ها تنظیم نشده‌اند. لطفاً بعداً تلاش کنید.")
+            return ConversationHandler.END
+        user = session.query(User).filter_by(telegram_id=update.effective_user.id).first()
+        if not user:
+            await update.message.reply_text("شما هنوز ثبت‌نام نکرده‌اید.")
+            return ConversationHandler.END
         if transaction_type == 'buy':
             rate = settings.sell_rate  # نرخ فروش
             total_price = amount / rate
@@ -310,7 +382,7 @@ async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             # ثبت تراکنش در دیتابیس
             transaction = Transaction(
-                user_id=session.query(User).filter_by(telegram_id=update.effective_user.id).first().id,
+                user_id=user.id,
                 transaction_type='buy',
                 amount=amount,
                 total_price=total_price,
@@ -326,7 +398,7 @@ async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             # ثبت تراکنش در دیتابیس
             transaction = Transaction(
-                user_id=session.query(User).filter_by(telegram_id=update.effective_user.id).first().id,
+                user_id=user.id,
                 transaction_type='sell',
                 amount=amount,
                 total_price=total_price,
@@ -338,6 +410,7 @@ async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("لطفاً یک مقدار معتبر وارد کنید.")
         return AMOUNT
+    await main_menu(update, context)
     return ConversationHandler.END
 
 async def manage_bank_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -351,7 +424,8 @@ async def manage_bank_accounts(update: Update, context: ContextTypes.DEFAULT_TYP
         text = "حساب‌های بانکی شما:\n"
         for account in accounts:
             status = "تأیید شده" if account.is_verified else "در انتظار تأیید"
-            text += f"- {account.bank_name} ({account.country}): {account.account_number} [{status}]\n"
+            country = "ایران" if account.country == 'Iran' else "ترکیه"
+            text += f"- {account.bank_name} ({country}): {account.account_number} [{status}]\n"
     else:
         text = "شما هیچ حساب بانکی ثبت‌شده‌ای ندارید."
     keyboard = [
@@ -362,6 +436,30 @@ async def manage_bank_accounts(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(text, reply_markup=reply_markup)
 
 async def add_bank_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [KeyboardButton("حساب بانکی ایران"), KeyboardButton("حساب بانکی ترکیه")],
+        ["بازگشت به منوی اصلی"]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text(
+        "لطفاً نوع حساب بانکی خود را انتخاب کنید:",
+        reply_markup=reply_markup
+    )
+    return BANK_COUNTRY
+
+async def get_bank_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    country = update.message.text.strip()
+    if country not in ["حساب بانکی ایران", "حساب بانکی ترکیه"]:
+        await update.message.reply_text(
+            "لطفاً یکی از گزینه‌های موجود را انتخاب کنید.",
+            reply_markup=ReplyKeyboardMarkup(
+                [["حساب بانکی ایران", "حساب بانکی ترکیه"]],
+                one_time_keyboard=True,
+                resize_keyboard=True
+            )
+        )
+        return BANK_COUNTRY
+    context.user_data['bank_country'] = 'Iran' if country == "حساب بانکی ایران" else 'Turkey'
     await update.message.reply_text(
         "لطفاً نام بانک را وارد کنید:",
         reply_markup=ReplyKeyboardRemove()
@@ -387,7 +485,7 @@ async def get_bank_account_number(update: Update, context: ContextTypes.DEFAULT_
         user_id=user.id,
         bank_name=context.user_data['bank_name'],
         account_number=context.user_data['account_number'],
-        country=user.country,
+        country=context.user_data['bank_country'],
         is_verified=False
     )
     session.add(bank_account)
@@ -433,6 +531,7 @@ async def set_rates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("تنظیم نرخ‌ها:", reply_markup=reply_markup)
+    return
 
 async def set_buy_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -457,6 +556,7 @@ async def save_buy_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("لطفاً یک عدد معتبر و بزرگ‌تر از صفر وارد کنید:")
         return SET_BUY_RATE
+    await admin_panel(update, context)
     return ConversationHandler.END
 
 async def set_sell_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -482,6 +582,7 @@ async def save_sell_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("لطفاً یک عدد معتبر و بزرگ‌تر از صفر وارد کنید:")
         return SET_SELL_RATE
+    await admin_panel(update, context)
     return ConversationHandler.END
 
 async def approve_user(user_id, context: ContextTypes.DEFAULT_TYPE):
@@ -491,12 +592,12 @@ async def approve_user(user_id, context: ContextTypes.DEFAULT_TYPE):
         session.commit()
         await context.bot.send_message(
             chat_id=user.telegram_id,
-            text="حساب شما تأیید شد و اکنون می‌توانید از ربات استفاده کنید."
+            text="حساب شما تأیید شد و اکنون می‌توانید از ربات استفاده کنید.",
+            reply_markup=ReplyKeyboardRemove()
         )
         await context.bot.send_message(
             chat_id=user.telegram_id,
-            text="به منوی اصلی خوش آمدید.",
-            reply_markup=ReplyKeyboardRemove()
+            text="به منوی اصلی خوش آمدید."
         )
     else:
         logger.error(f"کاربر با ID {user_id} یافت نشد.")
@@ -508,18 +609,11 @@ async def reject_user(user_id, context: ContextTypes.DEFAULT_TYPE):
         session.commit()
         await context.bot.send_message(
             chat_id=user.telegram_id,
-            text="حساب شما رد شد. اگر فکر می‌کنید اشتباهی رخ داده، دوباره تلاش کنید."
+            text="حساب شما رد شد. اگر فکر می‌کنید اشتباهی رخ داده، دوباره تلاش کنید.",
+            reply_markup=ReplyKeyboardRemove()
         )
     else:
         logger.error(f"کاربر با ID {user_id} یافت نشد.")
-
-async def add_bank_account_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await add_bank_account(update, context)
-    return BANK_NAME
-
-async def set_rates_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await set_rates(update, context)
-    return
 
 # بخش اصلی اجرای ربات
 def main():
@@ -538,11 +632,13 @@ def main():
             COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
             PHONE: [MessageHandler(filters.CONTACT, get_phone)],
             ID_CARD: [MessageHandler(filters.PHOTO, get_id_card)],
+            SELECT_TRANSACTION_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)],
             AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount)],
-            SET_BUY_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_buy_rate)],
-            SET_SELL_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_sell_rate)],
+            BANK_COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bank_country)],
             BANK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bank_name)],
             BANK_ACCOUNT_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bank_account_number)],
+            SET_BUY_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_buy_rate)],
+            SET_SELL_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_sell_rate)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         per_user=True,
@@ -553,9 +649,6 @@ def main():
 
     # اضافه کردن MessageHandler برای مدیریت منوها و سایر پیام‌ها
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-
-    # اضافه کردن هندلرهای مربوط به تنظیم نرخ‌ها توسط ادمین
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_rates_flow))
 
     # شروع polling
     application.run_polling()
