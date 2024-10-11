@@ -10,8 +10,15 @@ from sqlalchemy.orm import sessionmaker
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# توکن ربات را از متغیر محیطی دریافت کنید
-TOKEN = os.getenv('7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos', '179044957')
+# توکن ربات (جایگزین توکن واقعی خودتان کنید)
+TOKEN = '7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos'  # مکان 1: جایگزین کردن توکن درست
+
+# تعریف شناسه ادمین
+ADMIN_IDS = ['179044957']  # مکان 2: شناسه تلگرام خودتان به عنوان ادمین
+
+# تابع برای بررسی اینکه کاربر ادمین است یا نه
+def is_admin(user_id):
+    return str(user_id) in ADMIN_IDS
 
 # تنظیمات دیتابیس
 engine = create_engine('sqlite:///bot.db', connect_args={'check_same_thread': False})
