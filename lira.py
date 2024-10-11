@@ -1,24 +1,20 @@
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler, ContextTypes
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import os
 
 # تنظیمات لاگینگ
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# توکن ربات (جایگزین توکن واقعی خودتان کنید)
-TOKEN = '7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos'
+# توکن ربات خود را وارد کنید
+TOKEN = '7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos'  # مکان 1: جایگزین کردن توکن درست
 
-# تعریف شناسه ادمین
-ADMIN_IDS = ['179044957']  # شناسه تلگرام شما به عنوان ادمین
-
-# تابع برای بررسی اینکه کاربر ادمین است یا نه
-def is_admin(user_id):
-    return str(user_id) in ADMIN_IDS
+# آیدی‌های ادمین‌ها
+ADMIN_IDS = [179044957]  # جایگزین با آیدی‌های ادمین
 
 # تنظیمات دیتابیس
 engine = create_engine('sqlite:///bot.db', connect_args={'check_same_thread': False})
@@ -68,34 +64,41 @@ Base.metadata.create_all(engine)
 NAME, FAMILY_NAME, COUNTRY, PHONE, ID_CARD = range(5)
 SET_BUY_RATE, SET_SELL_RATE = range(10, 12)
 BANK_COUNTRY, BANK_NAME, BANK_ACCOUNT_NUMBER = range(12, 15)
+AMOUNT = range(15, 16)
 
-async def start(update: Update, context):
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user = session.query(User).filter_by(telegram_id=user_id).first()
     if user:
-        await update.message.reply_text("شما قبلاً ثبت‌نام کرده‌اید.")
-        await main_menu(update, context)
+        if user.is_verified:
+            await update.message.reply_text("شما قبلاً ثبت‌نام کرده‌اید و حساب شما تأیید شده است.")
+            await main_menu(update, context)
+        else:
+            await update.message.reply_text("حساب شما در انتظار تأیید است. لطفاً صبور باشید.")
         return ConversationHandler.END
     else:
         await update.message.reply_text("سلام! برای استفاده از ربات، لطفاً فرآیند احراز هویت را تکمیل کنید.\nلطفاً نام خود را وارد کنید:")
         return NAME
 
-async def get_name(update: Update, context):
+async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['name'] = update.message.text
     await update.message.reply_text("لطفاً نام خانوادگی خود را وارد کنید:")
     return FAMILY_NAME
 
-async def get_family_name(update: Update, context):
+async def get_family_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['family_name'] = update.message.text
     keyboard = [
-        [InlineKeyboardButton("ایران", callback_data='Iran'),
-         InlineKeyboardButton("ترکیه", callback_data='Turkey')]
+        [InlineKeyboardButton("ایران", callback_data='ایران'),
+         InlineKeyboardButton("ترکیه", callback_data='ترکیه')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("کشور محل سکونت خود را انتخاب کنید:", reply_markup=reply_markup)
     return COUNTRY
 
-async def get_country(update: Update, context):
+async def get_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['country'] = query.data
@@ -106,14 +109,17 @@ async def get_country(update: Update, context):
     await context.bot.send_message(chat_id=query.from_user.id, text="لطفاً شماره تلفن خود را به اشتراک بگذارید:", reply_markup=reply_markup)
     return PHONE
 
-async def get_phone(update: Update, context):
+async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
     context.user_data['phone'] = contact.phone_number
-    await update.message.reply_text("لطفاً تصویر کارت ملی یا پاسپورت خود را ارسال کنید:")
+    await update.message.reply_text("لطفاً تصویر کارت ملی یا پاسپورت خود را ارسال کنید:", reply_markup=ReplyKeyboardRemove())
     return ID_CARD
 
-async def get_id_card(update: Update, context):
+async def get_id_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    if not update.message.photo:
+        await update.message.reply_text("لطفاً یک تصویر ارسال کنید.")
+        return ID_CARD
     photo_file = await update.message.photo[-1].get_file()
     if not os.path.exists('user_data'):
         os.makedirs('user_data')
@@ -143,11 +149,11 @@ async def get_id_card(update: Update, context):
         await context.bot.send_message(chat_id=admin_id, text="لطفاً کاربر را تأیید یا رد کنید:", reply_markup=reply_markup)
     return ConversationHandler.END
 
-async def cancel(update: Update, context):
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('فرآیند لغو شد.', reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-async def main_menu(update: Update, context):
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("خرید لیر", callback_data='buy_lira')],
         [InlineKeyboardButton("فروش لیر", callback_data='sell_lira')],
@@ -163,40 +169,164 @@ async def main_menu(update: Update, context):
     elif update.callback_query:
         await update.callback_query.edit_message_text("به منوی اصلی خوش آمدید. لطفاً یکی از گزینه‌ها را انتخاب کنید:", reply_markup=reply_markup)
 
-async def button_handler(update: Update, context):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.data == 'buy_lira':
-        await buy_lira(update, context)
-    elif query.data == 'sell_lira':
-        await sell_lira(update, context)
-    elif query.data == 'bank_accounts':
-        await bank_accounts(update, context)
-    elif query.data == 'transaction_history':
-        await transaction_history(update, context)
-    elif query.data == 'support':
-        await support(update, context)
-    elif query.data == 'main_menu':
+    data = query.data
+    if data == 'buy_lira':
+        await query.message.reply_text("لطفاً مقدار لیر که می‌خواهید بخرید را وارد کنید:")
+        context.user_data['transaction_type'] = 'buy'
+        return AMOUNT
+    elif data == 'sell_lira':
+        await query.message.reply_text("لطفاً مقدار لیر که می‌خواهید بفروشید را وارد کنید:")
+        context.user_data['transaction_type'] = 'sell'
+        return AMOUNT
+    elif data == 'bank_accounts':
+        await manage_bank_accounts(update, context)
+        return ConversationHandler.END
+    elif data == 'transaction_history':
+        await show_transaction_history(update, context)
+        return ConversationHandler.END
+    elif data == 'support':
+        await query.message.reply_text("برای پشتیبانی با ما تماس بگیرید: support@example.com")
+    elif data == 'main_menu':
         await main_menu(update, context)
-    elif query.data == 'admin_panel':
-        await admin_panel(update, context)
-    # ادامه برای مدیریت بقیه حالت‌ها...
+    elif data == 'admin_panel':
+        if is_admin(update.effective_user.id):
+            await admin_panel(update, context)
+        else:
+            await query.message.reply_text("شما دسترسی لازم را ندارید.")
+    elif data.startswith('approve_user_'):
+        user_id = int(data.split('_')[-1])
+        await approve_user(user_id, context)
+        await query.message.reply_text("کاربر تأیید شد.")
+    elif data.startswith('reject_user_'):
+        user_id = int(data.split('_')[-1])
+        await reject_user(user_id, context)
+        await query.message.reply_text("کاربر رد شد.")
+    else:
+        await query.message.reply_text("دستور ناشناخته.")
+    return ConversationHandler.END
 
-# تابع برای نمایش شناسه تلگرام کاربر
-async def show_user_id(update: Update, context):
-    user_id = update.message.from_user.id
-    await update.message.reply_text(f"شناسه تلگرام شما: {user_id}")
+async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    amount_text = update.message.text
+    try:
+        amount = float(amount_text)
+        if amount <= 0:
+            raise ValueError
+        context.user_data['amount'] = amount
+        transaction_type = context.user_data['transaction_type']
+        settings = session.query(Settings).first()
+        if not settings:
+            settings = Settings()
+            session.add(settings)
+            session.commit()
+        if transaction_type == 'buy':
+            rate = settings.buy_rate
+            total_price = amount * rate
+            await update.message.reply_text(f"مبلغ کل برای خرید {amount} لیر برابر است با {total_price} تومان.")
+        else:
+            rate = settings.sell_rate
+            total_price = amount * rate
+            await update.message.reply_text(f"مبلغ کل برای فروش {amount} لیر برابر است با {total_price} تومان.")
+        # در اینجا می‌توانید فرآیند پرداخت یا ادامه تراکنش را اضافه کنید.
+    except ValueError:
+        await update.message.reply_text("لطفاً یک مقدار معتبر وارد کنید.")
+        return AMOUNT
+    return ConversationHandler.END
+
+async def manage_bank_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = session.query(User).filter_by(telegram_id=user_id).first()
+    accounts = session.query(BankAccount).filter_by(user_id=user.id).all()
+    if accounts:
+        text = "حساب‌های بانکی شما:\n"
+        for account in accounts:
+            text += f"- {account.bank_name} ({account.country}): {account.account_number}\n"
+    else:
+        text = "شما هیچ حساب بانکی ثبت‌شده‌ای ندارید."
+    keyboard = [
+        [InlineKeyboardButton("افزودن حساب جدید", callback_data='add_bank_account')],
+        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data='main_menu')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+
+async def show_transaction_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = session.query(User).filter_by(telegram_id=user_id).first()
+    transactions = session.query(Transaction).filter_by(user_id=user.id).all()
+    if transactions:
+        text = "تاریخچه تراکنش‌های شما:\n"
+        for t in transactions:
+            text += f"- {t.transaction_type}: {t.amount} لیر، وضعیت: {t.status}\n"
+    else:
+        text = "شما هیچ تراکنشی ندارید."
+    keyboard = [
+        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data='main_menu')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data='main_menu')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.edit_message_text("پنل مدیریت:", reply_markup=reply_markup)
+
+async def approve_user(user_id, context: ContextTypes.DEFAULT_TYPE):
+    user = session.query(User).filter_by(id=user_id).first()
+    if user:
+        user.is_verified = True
+        session.commit()
+        await context.bot.send_message(chat_id=user.telegram_id, text="حساب شما تأیید شد.")
+    else:
+        logger.error("کاربر یافت نشد.")
+
+async def reject_user(user_id, context: ContextTypes.DEFAULT_TYPE):
+    user = session.query(User).filter_by(id=user_id).first()
+    if user:
+        session.delete(user)
+        session.commit()
+        await context.bot.send_message(chat_id=user.telegram_id, text="حساب شما رد شد.")
+    else:
+        logger.error("کاربر یافت نشد.")
+
+async def set_rates(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("تنظیم نرخ خرید", callback_data='set_buy_rate')],
+        [InlineKeyboardButton("تنظیم نرخ فروش", callback_data='set_sell_rate')],
+        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data='main_menu')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.edit_message_text("تنظیم نرخ‌ها:", reply_markup=reply_markup)
 
 # بخش اصلی اجرای ربات
 def main():
     # ایجاد application
     application = Application.builder().token(TOKEN).build()
 
-    # تعریف هندلرها
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('id', show_user_id))  # هندلر برای نمایش شناسه تلگرام
+    # تعریف ConversationHandler‌ها
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            FAMILY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
+            COUNTRY: [CallbackQueryHandler(get_country, pattern='^(ایران|ترکیه)$')],
+            PHONE: [MessageHandler(filters.CONTACT, get_phone)],
+            ID_CARD: [MessageHandler(filters.PHOTO, get_id_card)],
+            AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+        per_user=True,
+    )
 
-    # بقیه هندلرها...
+    # اضافه کردن هندلرها به application
+    application.add_handler(conv_handler)
+    application.add_handler(CallbackQueryHandler(button_handler))
 
     # شروع polling
     application.run_polling()
