@@ -1,23 +1,24 @@
 import logging
-import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+import os
 
 # تنظیمات لاگینگ
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = '7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos'  # مکان 1: جایگزین کردن توکن درست
+# توکن ربات (جایگزین توکن واقعی خودتان کنید)
+TOKEN = '7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos'
 
-# تعریف آیدی‌های ادمین
-ADMIN_IDS = [179044957]  # آیدی تلگرام ادمین را در این لیست قرار دهید
+# تعریف شناسه ادمین
+ADMIN_IDS = ['179044957']  # شناسه تلگرام شما به عنوان ادمین
 
-# تابع برای بررسی ادمین بودن کاربر
+# تابع برای بررسی اینکه کاربر ادمین است یا نه
 def is_admin(user_id):
-    return user_id in ADMIN_IDS
+    return str(user_id) in ADMIN_IDS
 
 # تنظیمات دیتابیس
 engine = create_engine('sqlite:///bot.db', connect_args={'check_same_thread': False})
@@ -72,9 +73,6 @@ async def start(update: Update, context):
     user_id = update.message.from_user.id
     user = session.query(User).filter_by(telegram_id=user_id).first()
     if user:
-        if not user.is_verified:
-            await update.message.reply_text("حساب کاربری شما هنوز تأیید نشده است. لطفاً منتظر تأیید ادمین باشید.")
-            return ConversationHandler.END
         await update.message.reply_text("شما قبلاً ثبت‌نام کرده‌اید.")
         await main_menu(update, context)
         return ConversationHandler.END
@@ -123,7 +121,6 @@ async def get_id_card(update: Update, context):
     await photo_file.download(photo_path)
     context.user_data['id_card'] = photo_path
     await update.message.reply_text("اطلاعات شما دریافت شد و در انتظار تأیید ادمین است.")
-    # ذخیره اطلاعات کاربر در دیتابیس
     user = User(
         telegram_id=user_id,
         name=context.user_data['name'],
@@ -134,7 +131,6 @@ async def get_id_card(update: Update, context):
     )
     session.add(user)
     session.commit()
-    # ارسال اطلاعات به ادمین‌ها برای تأیید
     for admin_id in ADMIN_IDS:
         await context.bot.send_message(chat_id=admin_id, text=f"کاربر جدید:\nنام: {user.name} {user.family_name}\nکشور: {user.country}\nشماره تلفن: {user.phone}")
         with open(photo_path, 'rb') as photo:
@@ -171,73 +167,36 @@ async def button_handler(update: Update, context):
     query = update.callback_query
     await query.answer()
     if query.data == 'buy_lira':
-        # await buy_lira(update, context)
-        pass  # تابع را بر اساس نیاز خود تکمیل کنید
+        await buy_lira(update, context)
     elif query.data == 'sell_lira':
-        # await sell_lira(update, context)
-        pass
+        await sell_lira(update, context)
     elif query.data == 'bank_accounts':
-        # await bank_accounts(update, context)
-        pass
+        await bank_accounts(update, context)
     elif query.data == 'transaction_history':
-        # await transaction_history(update, context)
-        pass
+        await transaction_history(update, context)
     elif query.data == 'support':
-        # await support(update, context)
-        pass
+        await support(update, context)
     elif query.data == 'main_menu':
         await main_menu(update, context)
     elif query.data == 'admin_panel':
-        # await admin_panel(update, context)
-        pass
-    elif query.data.startswith('approve_user_') or query.data.startswith('reject_user_'):
-        await approve_or_reject_user(update, context)
+        await admin_panel(update, context)
     # ادامه برای مدیریت بقیه حالت‌ها...
 
-async def approve_or_reject_user(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    data = query.data.split('_')
-    action = data[0]
-    user_id = int(data[2])
-    user = session.query(User).filter_by(id=user_id).first()
-    if user:
-        if action == 'approve':
-            user.is_verified = True
-            session.commit()
-            await context.bot.send_message(chat_id=user.telegram_id, text="حساب کاربری شما تأیید شد.")
-            await query.edit_message_text("کاربر تأیید شد.")
-        elif action == 'reject':
-            session.delete(user)
-            session.commit()
-            await context.bot.send_message(chat_id=user.telegram_id, text="حساب کاربری شما رد شد.")
-            await query.edit_message_text("کاربر رد شد.")
-    else:
-        await query.edit_message_text("کاربر مورد نظر یافت نشد.")
+# تابع برای نمایش شناسه تلگرام کاربر
+async def show_user_id(update: Update, context):
+    user_id = update.message.from_user.id
+    await update.message.reply_text(f"شناسه تلگرام شما: {user_id}")
 
 # بخش اصلی اجرای ربات
 def main():
     # ایجاد application
     application = Application.builder().token(TOKEN).build()
 
-    # تعریف ConversationHandler‌ها
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            FAMILY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
-            COUNTRY: [CallbackQueryHandler(get_country)],
-            PHONE: [MessageHandler(filters.CONTACT, get_phone)],
-            ID_CARD: [MessageHandler(filters.PHOTO, get_id_card)]
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
+    # تعریف هندلرها
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('id', show_user_id))  # هندلر برای نمایش شناسه تلگرام
 
-    # اضافه کردن هندلرها به application
-    application.add_handler(conv_handler)
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(CallbackQueryHandler(approve_or_reject_user, pattern='^(approve|reject)_user_\\d+$'))
-    # بقیه هندلرها را نیز اضافه کنید
+    # بقیه هندلرها...
 
     # شروع polling
     application.run_polling()
