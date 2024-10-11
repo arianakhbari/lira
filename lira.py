@@ -10,15 +10,14 @@ from sqlalchemy.orm import sessionmaker
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# توکن ربات (جایگزین توکن واقعی خودتان کنید)
 TOKEN = '7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos'  # مکان 1: جایگزین کردن توکن درست
 
-# تعریف شناسه ادمین
-ADMIN_IDS = ['179044957']  # مکان 2: شناسه تلگرام خودتان به عنوان ادمین
+# تعریف آیدی‌های ادمین
+ADMIN_IDS = [179044957]  # آیدی تلگرام ادمین را در این لیست قرار دهید
 
-# تابع برای بررسی اینکه کاربر ادمین است یا نه
+# تابع برای بررسی ادمین بودن کاربر
 def is_admin(user_id):
-    return str(user_id) in ADMIN_IDS
+    return user_id in ADMIN_IDS
 
 # تنظیمات دیتابیس
 engine = create_engine('sqlite:///bot.db', connect_args={'check_same_thread': False})
@@ -73,6 +72,9 @@ async def start(update: Update, context):
     user_id = update.message.from_user.id
     user = session.query(User).filter_by(telegram_id=user_id).first()
     if user:
+        if not user.is_verified:
+            await update.message.reply_text("حساب کاربری شما هنوز تأیید نشده است. لطفاً منتظر تأیید ادمین باشید.")
+            return ConversationHandler.END
         await update.message.reply_text("شما قبلاً ثبت‌نام کرده‌اید.")
         await main_menu(update, context)
         return ConversationHandler.END
@@ -121,6 +123,7 @@ async def get_id_card(update: Update, context):
     await photo_file.download(photo_path)
     context.user_data['id_card'] = photo_path
     await update.message.reply_text("اطلاعات شما دریافت شد و در انتظار تأیید ادمین است.")
+    # ذخیره اطلاعات کاربر در دیتابیس
     user = User(
         telegram_id=user_id,
         name=context.user_data['name'],
@@ -131,6 +134,7 @@ async def get_id_card(update: Update, context):
     )
     session.add(user)
     session.commit()
+    # ارسال اطلاعات به ادمین‌ها برای تأیید
     for admin_id in ADMIN_IDS:
         await context.bot.send_message(chat_id=admin_id, text=f"کاربر جدید:\nنام: {user.name} {user.family_name}\nکشور: {user.country}\nشماره تلفن: {user.phone}")
         with open(photo_path, 'rb') as photo:
@@ -167,22 +171,49 @@ async def button_handler(update: Update, context):
     query = update.callback_query
     await query.answer()
     if query.data == 'buy_lira':
-        await buy_lira(update, context)
+        # await buy_lira(update, context)
+        pass  # تابع را بر اساس نیاز خود تکمیل کنید
     elif query.data == 'sell_lira':
-        await sell_lira(update, context)
+        # await sell_lira(update, context)
+        pass
     elif query.data == 'bank_accounts':
-        await bank_accounts(update, context)
+        # await bank_accounts(update, context)
+        pass
     elif query.data == 'transaction_history':
-        await transaction_history(update, context)
+        # await transaction_history(update, context)
+        pass
     elif query.data == 'support':
-        await support(update, context)
+        # await support(update, context)
+        pass
     elif query.data == 'main_menu':
         await main_menu(update, context)
     elif query.data == 'admin_panel':
-        await admin_panel(update, context)
+        # await admin_panel(update, context)
+        pass
+    elif query.data.startswith('approve_user_') or query.data.startswith('reject_user_'):
+        await approve_or_reject_user(update, context)
     # ادامه برای مدیریت بقیه حالت‌ها...
 
-# تنظیمات مربوط به مدیریت کاربران، تراکنش‌ها، نرخ‌ها، و سایر بخش‌ها همانند نسخه اصلی باقی می‌ماند.
+async def approve_or_reject_user(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split('_')
+    action = data[0]
+    user_id = int(data[2])
+    user = session.query(User).filter_by(id=user_id).first()
+    if user:
+        if action == 'approve':
+            user.is_verified = True
+            session.commit()
+            await context.bot.send_message(chat_id=user.telegram_id, text="حساب کاربری شما تأیید شد.")
+            await query.edit_message_text("کاربر تأیید شد.")
+        elif action == 'reject':
+            session.delete(user)
+            session.commit()
+            await context.bot.send_message(chat_id=user.telegram_id, text="حساب کاربری شما رد شد.")
+            await query.edit_message_text("کاربر رد شد.")
+    else:
+        await query.edit_message_text("کاربر مورد نظر یافت نشد.")
 
 # بخش اصلی اجرای ربات
 def main():
@@ -205,6 +236,7 @@ def main():
     # اضافه کردن هندلرها به application
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(CallbackQueryHandler(approve_or_reject_user, pattern='^(approve|reject)_user_\\d+$'))
     # بقیه هندلرها را نیز اضافه کنید
 
     # شروع polling
