@@ -11,7 +11,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # توکن ربات را از متغیر محیطی دریافت کنید
-TOKEN = os.getenv('BOT_TOKEN', 'YOUR_TOKEN_HERE')
+TOKEN = os.getenv('7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos', '179044957')
 
 # تنظیمات دیتابیس
 engine = create_engine('sqlite:///bot.db', connect_args={'check_same_thread': False})
