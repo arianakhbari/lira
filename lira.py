@@ -310,26 +310,30 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# هندلر پیام‌های کاربر
-async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# هندلر پیام‌های کاربر (منوی اصلی)
+async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     user = session.query(User).filter_by(telegram_id=user_id).first()
 
     if not user:
         await update.message.reply_text("❌ لطفاً ابتدا فرآیند احراز هویت را تکمیل کنید با استفاده از دستور /start.")
-        return ConversationHandler.END
+        return
+
+    if text == "⚙️ پنل مدیریت" and is_admin(user_id):
+        await admin_panel(update, context)
+        return
 
     if text == "💱 لیر":
         settings = session.query(Settings).first()
         if not settings:
             await update.message.reply_text("⚠️ نرخ‌ها تنظیم نشده‌اند. لطفاً بعداً تلاش کنید.")
-            return ConversationHandler.END
+            return
 
         # بررسی فعال بودن خرید و فروش
         if not settings.buy_enabled and not settings.sell_enabled:
             await update.message.reply_text("⚠️ خرید و فروش در حال حاضر غیر فعال است.")
-            return ConversationHandler.END
+            return
 
         # نمایش نرخ‌ها با ایموجی ترکیه
         buy_status = "✅ فعال" if settings.buy_enabled else "❌ غیرفعال"
@@ -363,9 +367,6 @@ async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
     elif text == "📞 پشتیبانی":
         await update.message.reply_text("برای پشتیبانی با ما تماس بگیرید: support@example.com")
-        return ConversationHandler.END
-    elif text == "⚙️ پنل مدیریت" and is_admin(user_id):
-        await admin_panel(update, context)
         return ConversationHandler.END
     else:
         # مدیریت انتخاب بعد از نمایش نرخ‌ها
@@ -759,68 +760,7 @@ async def admin_confirm_payment(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("⚠️ گزینه نامعتبری انتخاب شده است.")
     return ConversationHandler.END
 
-# ارسال فیش واریز از کاربر پس از تأیید پرداخت توسط ادمین
-async def receive_admin_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    user = session.query(User).filter_by(telegram_id=user_id).first()
-    if not user:
-        await update.message.reply_text("❌ تراکنش یافت نشد.")
-        return ConversationHandler.END
-
-    # یافتن تراکنش‌های تایید شده و در انتظار واریز
-    transaction = session.query(Transaction).filter_by(user_id=user.id, status='confirmed').first()
-    if not transaction:
-        await update.message.reply_text("❌ تراکنش یافت نشد یا در وضعیت مناسبی قرار ندارد.")
-        return ConversationHandler.END
-
-    if not update.message.photo:
-        await update.message.reply_text("⚠️ لطفاً یک تصویر فیش واریز ارسال کنید.")
-        return SEND_PAYMENT_PROOF
-
-    photo = update.message.photo[-1]
-    file_size = photo.file_size
-    if file_size > 5 * 1024 * 1024:
-        await update.message.reply_text("⚠️ اندازه فایل بیش از حد مجاز است (حداکثر 5 مگابایت). لطفاً فیش کوچکتری ارسال کنید.")
-        return SEND_PAYMENT_PROOF
-
-    # دانلود فیش واریز
-    photo_file = await photo.get_file()
-    if not os.path.exists('admin_payment_proofs'):
-        os.makedirs('admin_payment_proofs')
-    photo_path = f"admin_payment_proofs/{transaction.id}_admin_payment.jpg"
-    await photo_file.download_to_drive(custom_path=photo_path)
-    transaction.admin_payment_proof = photo_path
-    transaction.status = 'transaction_completed'
-    session.commit()
-
-    await update.message.reply_text("✅ فیش واریز شما دریافت شد و در انتظار تأیید ادمین است.")
-
-    # اطلاع رسانی به ادمین‌ها
-    for admin_id in ADMIN_IDS:
-        user = session.query(User).filter_by(id=transaction.user_id).first()
-        transaction_details = (
-            f"🔔 **فیش واریز برای تراکنش {transaction.id} ارسال شده است.**\n\n"
-            f"👤 **کاربر:** {user.name} {user.family_name} (ID: {user.id})\n"
-            f"💱 **نوع تراکنش:** {'خرید' if transaction.transaction_type == 'buy' else 'فروش'} لیر\n"
-            f"🔢 **مقدار:** {transaction.amount} لیر\n"
-            f"💰 **مبلغ کل:** {transaction.total_price:.2f} تومان\n\n"
-            f"📸 **فیش واریز ادمین:**"
-        )
-        keyboard = [
-            [InlineKeyboardButton("✅ تایید تراکنش", callback_data=f'complete_transaction_{transaction.id}'),
-             InlineKeyboardButton("❌ لغو تراکنش", callback_data=f'cancel_transaction_{transaction.id}')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=transaction_details,
-            reply_markup=reply_markup
-        )
-        with open(photo_path, 'rb') as photo_file_obj:
-            await context.bot.send_photo(chat_id=admin_id, photo=photo_file_obj)
-    return ConversationHandler.END
-
-# تایید یا لغو تراکنش توسط ادمین پس از ارسال فیش واریز ادمین
+# تایید تراکنش توسط ادمین پس از ارسال فیش واریز ادمین
 async def admin_final_confirm_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -999,22 +939,111 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ شما دسترسی لازم برای انجام این عمل را ندارید.")
         return ConversationHandler.END
     keyboard = [
-       
-        ["👥 مدیریت کاربران"],
-        ["📈 تنظیم نرخ‌ها"],
-        ["🔄 مدیریت خرید و فروش"],
-        ["📋 تنظیم اطلاعات بانکی ادمین"],
-        ["↩️ بازگشت به منوی اصلی"]
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("⚙️ **پنل مدیریت:**", reply_markup=reply_markup)
 
-# تنظیم نرخ خرید
-async def set_buy_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📈 لطفاً نرخ خرید جدید را وارد کنید (تومان به لیر):",
-        reply_markup=ReplyKeyboardRemove()
+# مدیریت کاربران توسط ادمین
+async def manage_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    users = session.query(User).filter_by(is_verified=False).all()
+    if not users:
+        await query.edit_message_text("👥 هیچ کاربر جدیدی برای بررسی وجود ندارد.")
+        return
+    for user in users:
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=(
+                f"📋 **کاربر جدید:**\n"
+                f"👤 نام: {user.name} {user.family_name}\n"
+                f"🌍 کشور: {user.country}\n"
+                f"📞 شماره تلفن: {user.phone}\n\n"
+                f"🔄 **گزینه‌ها:**"
+            )
+        )
+        keyboard = [
+            [InlineKeyboardButton("✅ تأیید", callback_data=f'approve_user_{user.id}'),
+             InlineKeyboardButton("❌ رد", callback_data=f'reject_user_{user.id}')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=f"🔄 لطفاً کاربر {user.id} را تأیید یا رد کنید:",
+            reply_markup=reply_markup
+        )
+        # ارسال فیش کارت ملی یا پاسپورت
+        # فرض بر اینکه مسیر فایل در `user.id` موجود است
+        photo_path = f"user_data/{user.telegram_id}_id.jpg"
+        if os.path.exists(photo_path):
+            with open(photo_path, 'rb') as photo_file_obj:
+                await context.bot.send_photo(chat_id=update.effective_user.id, photo=photo_file_obj)
+    await query.edit_message_text("👥 مدیریت کاربران انجام شد.")
+    # بازگشت به پنل مدیریت
+    keyboard = [
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text="⚙️ **پنل مدیریت:**",
+        reply_markup=reply_markup
     )
+
+# تنظیم نرخ‌ها توسط ادمین
+async def set_rates(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("📈 تنظیم نرخ خرید", callback_data='set_buy_rate')],
+        [InlineKeyboardButton("📉 تنظیم نرخ فروش", callback_data='set_sell_rate')],
+        [InlineKeyboardButton("↩️ بازگشت به پنل مدیریت", callback_data='back_to_admin_panel')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("📈 **تنظیم نرخ‌ها:**", reply_markup=reply_markup)
+
+# مدیریت خرید و فروش توسط ادمین
+async def manage_buy_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    settings = session.query(Settings).first()
+    buy_status = "✅ فعال" if settings.buy_enabled else "❌ غیرفعال"
+    sell_status = "✅ فعال" if settings.sell_enabled else "❌ غیرفعال"
+    keyboard = [
+        [InlineKeyboardButton(f"🛒 خرید لیر ({buy_status})", callback_data='toggle_buy')],
+        [InlineKeyboardButton(f"💸 فروش لیر ({sell_status})", callback_data='toggle_sell')],
+        [InlineKeyboardButton("↩️ بازگشت به پنل مدیریت", callback_data='back_to_admin_panel')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("🔄 **مدیریت خرید و فروش:**", reply_markup=reply_markup)
+
+# تنظیم اطلاعات بانکی ادمین توسط ادمین
+async def set_admin_bank_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("🔸 تنظیم اطلاعات حساب بانکی ایران", callback_data='set_admin_iran_bank')],
+        [InlineKeyboardButton("🔸 تنظیم اطلاعات حساب بانکی ترکیه", callback_data='set_admin_turkey_bank')],
+        [InlineKeyboardButton("↩️ بازگشت به پنل مدیریت", callback_data='back_to_admin_panel')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("📋 **تنظیم اطلاعات بانکی ادمین:**", reply_markup=reply_markup)
+
+# تنظیم نرخ خرید توسط ادمین
+async def set_buy_rate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📈 لطفاً نرخ خرید جدید را وارد کنید (تومان به لیر):")
+    context.user_data['setting_type'] = 'buy_rate'
     return SET_BUY_RATE
 
 # ذخیره نرخ خرید
@@ -1038,15 +1067,24 @@ async def save_buy_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ خطا در تنظیم نرخ خرید: {e}")
         await update.message.reply_text("⚠️ خطا در تنظیم نرخ خرید. لطفاً دوباره تلاش کنید:")
         return SET_BUY_RATE
-    await admin_panel(update, context)
+    # بازگشت به پنل مدیریت
+    keyboard = [
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("⚙️ **پنل مدیریت:**", reply_markup=reply_markup)
     return ConversationHandler.END
 
-# تنظیم نرخ فروش
-async def set_sell_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📉 لطفاً نرخ فروش جدید را وارد کنید (لیر به تومان):",
-        reply_markup=ReplyKeyboardRemove()
-    )
+# تنظیم نرخ فروش توسط ادمین
+async def set_sell_rate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📉 لطفاً نرخ فروش جدید را وارد کنید (لیر به تومان):")
+    context.user_data['setting_type'] = 'sell_rate'
     return SET_SELL_RATE
 
 # ذخیره نرخ فروش
@@ -1070,39 +1108,22 @@ async def save_sell_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ خطا در تنظیم نرخ فروش: {e}")
         await update.message.reply_text("⚠️ خطا در تنظیم نرخ فروش. لطفاً دوباره تلاش کنید:")
         return SET_SELL_RATE
-    await admin_panel(update, context)
-    return ConversationHandler.END
-
-# تنظیم اطلاعات بانکی ادمین
-async def set_admin_bank_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ شما دسترسی لازم برای انجام این عمل را ندارید.")
-        return ConversationHandler.END
-    text = update.message.text.strip()
-    settings = session.query(Settings).first()
-    if not settings:
-        settings = Settings()
-        session.add(settings)
-    if "ایران" in text:
-        settings.admin_iran_bank_account = text
-        await update.message.reply_text("🔸 اطلاعات حساب بانکی ایران ادمین ذخیره شد.")
-    elif "ترکیه" in text:
-        settings.admin_turkey_bank_account = text
-        await update.message.reply_text("🔸 اطلاعات حساب بانکی ترکیه ادمین ذخیره شد.")
-    else:
-        await update.message.reply_text("⚠️ لطفاً اطلاعات بانکی را به درستی وارد کنید.")
-        return SET_ADMIN_BANK_INFO
-    session.commit()
-    await admin_panel(update, context)
+    # بازگشت به پنل مدیریت
+    keyboard = [
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("⚙️ **پنل مدیریت:**", reply_markup=reply_markup)
     return ConversationHandler.END
 
 # غیرفعال یا فعال کردن خرید
 async def toggle_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ شما دسترسی لازم برای انجام این عمل را ندارید.")
-        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
     settings = session.query(Settings).first()
     if not settings:
         settings = Settings()
@@ -1110,16 +1131,23 @@ async def toggle_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings.buy_enabled = not settings.buy_enabled
     session.commit()
     status = "✅ فعال" if settings.buy_enabled else "❌ غیرفعال"
-    await update.message.reply_text(f"📈 قابلیت خرید لیر به حالت `{status}` تغییر یافت.", parse_mode='Markdown')
-    await admin_panel(update, context)
+    await query.edit_message_text(f"📈 قابلیت خرید لیر به حالت `{status}` تغییر یافت.", parse_mode='Markdown')
+    # بازگشت به پنل مدیریت
+    keyboard = [
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("⚙️ **پنل مدیریت:**", reply_markup=reply_markup)
     return ConversationHandler.END
 
 # غیرفعال یا فعال کردن فروش
 async def toggle_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ شما دسترسی لازم برای انجام این عمل را ندارید.")
-        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
     settings = session.query(Settings).first()
     if not settings:
         settings = Settings()
@@ -1127,18 +1155,100 @@ async def toggle_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings.sell_enabled = not settings.sell_enabled
     session.commit()
     status = "✅ فعال" if settings.sell_enabled else "❌ غیرفعال"
-    await update.message.reply_text(f"📉 قابلیت فروش لیر به حالت `{status}` تغییر یافت.", parse_mode='Markdown')
-    await admin_panel(update, context)
+    await query.edit_message_text(f"📉 قابلیت فروش لیر به حالت `{status}` تغییر یافت.", parse_mode='Markdown')
+    # بازگشت به پنل مدیریت
+    keyboard = [
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("⚙️ **پنل مدیریت:**", reply_markup=reply_markup)
     return ConversationHandler.END
 
-# تایید تراکنش توسط ادمین (تراکنش‌های کاربران)
+# تنظیم اطلاعات بانکی ادمین (ایران)
+async def set_admin_iran_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔸 لطفاً اطلاعات حساب بانکی ایران ادمین را وارد کنید:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    context.user_data['admin_bank_type'] = 'iran'
+    return SET_ADMIN_BANK_INFO
+
+# تنظیم اطلاعات بانکی ادمین (ترکیه)
+async def set_admin_turkey_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔸 لطفاً اطلاعات حساب بانکی ترکیه ادمین را وارد کنید:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    context.user_data['admin_bank_type'] = 'turkey'
+    return SET_ADMIN_BANK_INFO
+
+# ذخیره اطلاعات بانکی ادمین
+async def set_admin_bank_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bank_info = update.message.text.strip()
+    bank_type = context.user_data.get('admin_bank_type')
+    if not bank_info:
+        await update.message.reply_text("⚠️ اطلاعات بانکی نمی‌تواند خالی باشد. لطفاً دوباره وارد کنید:")
+        return SET_ADMIN_BANK_INFO
+    settings = session.query(Settings).first()
+    if not settings:
+        settings = Settings()
+        session.add(settings)
+    if bank_type == 'iran':
+        settings.admin_iran_bank_account = bank_info
+        await update.message.reply_text("🔸 اطلاعات حساب بانکی ایران ادمین ذخیره شد.")
+    elif bank_type == 'turkey':
+        settings.admin_turkey_bank_account = bank_info
+        await update.message.reply_text("🔸 اطلاعات حساب بانکی ترکیه ادمین ذخیره شد.")
+    else:
+        await update.message.reply_text("⚠️ نوع حساب بانکی نامعتبر است.")
+        return SET_ADMIN_BANK_INFO
+    session.commit()
+    # بازگشت به پنل مدیریت
+    keyboard = [
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("⚙️ **پنل مدیریت:**", reply_markup=reply_markup)
+    return ConversationHandler.END
+
+# هندلر مدیریت خطاهای عمومی
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    # ارسال پیام خطا به کاربر
+    if isinstance(update, Update) and update.effective_chat:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⚠️ خطایی در سرور رخ داده است. لطفاً بعداً تلاش کنید."
+            )
+        except Exception as e:
+            logger.error(f"❌ خطا در ارسال پیام خطا به کاربر: {e}")
+    # ارسال پیام خطا به ادمین‌ها
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=f"⚠️ یک خطا در ربات رخ داده است:\n{context.error}"
+            )
+        except Exception as e:
+            logger.error(f"❌ خطا در ارسال پیام خطا به ادمین: {e}")
+
+# تایید یا رد کاربر توسط ادمین
 async def approve_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     if data.startswith('approve_user_'):
-        transaction_id = int(data.split('_')[-1])
-        user = session.query(User).filter_by(id=transaction_id).first()
+        user_id = int(data.split('_')[-1])
+        user = session.query(User).filter_by(id=user_id).first()
         if user:
             user.is_verified = True
             session.commit()
@@ -1150,8 +1260,8 @@ async def approve_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await query.edit_message_text("⚠️ کاربر یافت نشد.")
     elif data.startswith('reject_user_'):
-        transaction_id = int(data.split('_')[-1])
-        user = session.query(User).filter_by(id=transaction_id).first()
+        user_id = int(data.split('_')[-1])
+        user = session.query(User).filter_by(id=user_id).first()
         if user:
             session.delete(user)
             session.commit()
@@ -1166,72 +1276,7 @@ async def approve_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("⚠️ گزینه نامعتبری انتخاب شده است.")
     return ConversationHandler.END
 
-# تایید یا لغو تراکنش توسط ادمین پس از ارسال فیش واریز ادمین
-async def approve_transaction_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data.startswith('complete_transaction_'):
-        transaction_id = int(data.split('_')[-1])
-        transaction = session.query(Transaction).filter_by(id=transaction_id).first()
-        if transaction and transaction.status == 'transaction_completed':
-            transaction.status = 'done'
-            session.commit()
-            user = session.query(User).filter_by(id=transaction.user_id).first()
-
-            # ارسال پیام به کاربر درباره تکمیل تراکنش
-            await context.bot.send_message(
-                chat_id=user.telegram_id,
-                text=(
-                    f"✅ **تراکنش شما به طور کامل انجام شد!**\n\n"
-                    f"💱 **نوع تراکنش:** {'خرید' if transaction.transaction_type == 'buy' else 'فروش'} لیر\n"
-                    f"🔢 **مقدار:** {transaction.amount} لیر\n"
-                    f"💰 **مبلغ کل:** {transaction.total_price:.2f} تومان\n"
-                    f"🔄 **وضعیت تراکنش:** {transaction.status.capitalize()}."
-                )
-            )
-            await query.edit_message_text("✅ تراکنش تکمیل شد.")
-        else:
-            await query.edit_message_text("⚠️ تراکنش معتبر نیست یا قبلاً تکمیل شده است.")
-    elif data.startswith('cancel_transaction_'):
-        transaction_id = int(data.split('_')[-1])
-        transaction = session.query(Transaction).filter_by(id=transaction_id).first()
-        if transaction and transaction.status == 'transaction_completed':
-            transaction.status = 'canceled'
-            session.commit()
-            user = session.query(User).filter_by(id=transaction.user_id).first()
-            await context.bot.send_message(
-                chat_id=user.telegram_id,
-                text=(
-                    f"❌ **تراکنش شما لغو شد.**\n\n"
-                    f"💱 **نوع تراکنش:** {'خرید' if transaction.transaction_type == 'buy' else 'فروش'} لیر\n"
-                    f"🔢 **مقدار:** {transaction.amount} لیر\n"
-                    f"💰 **مبلغ کل:** {transaction.total_price:.2f} تومان\n"
-                    f"🔄 **وضعیت تراکنش:** {transaction.status.capitalize()}."
-                )
-            )
-            await query.edit_message_text("❌ تراکنش لغو شد.")
-    else:
-        await query.edit_message_text("⚠️ گزینه نامعتبری انتخاب شده است.")
-    return ConversationHandler.END
-
-# هندلر مدیریت خطاهای عمومی
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    # ارسال پیام خطا به کاربر
-    if isinstance(update, Update) and update.effective_chat:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="⚠️ خطایی در سرور رخ داده است. لطفاً بعداً تلاش کنید."
-        )
-    # ارسال پیام خطا به ادمین‌ها
-    for admin_id in ADMIN_IDS:
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"⚠️ یک خطا در ربات رخ داده است:\n{context.error}"
-        )
-
-# بخش اصلی اجرای ربات
+# تابع اصلی اجرای ربات
 def main():
     # ایجاد application
     application = Application.builder().token(TOKEN).build()
@@ -1248,7 +1293,7 @@ def main():
             COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
             PHONE: [MessageHandler(filters.CONTACT, get_phone)],
             ID_CARD: [MessageHandler(filters.PHOTO & ~filters.COMMAND, get_id_card)],
-            SELECT_TRANSACTION_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, user_message_handler)],
+            SELECT_TRANSACTION_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu_handler)],
             TRANSACTION_AMOUNT_TYPE: [CallbackQueryHandler(transaction_amount_type_handler, pattern='^amount_(toman|lira)$')],
             AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount)],
             CONFIRM_TRANSACTION: [CallbackQueryHandler(confirm_transaction, pattern='^confirm_transaction$')],
@@ -1258,40 +1303,31 @@ def main():
             BANK_ACCOUNT_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bank_account_number)],
             SET_BUY_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_buy_rate)],
             SET_SELL_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_sell_rate)],
-            TOGGLE_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, toggle_buy)],
-            TOGGLE_SELL: [MessageHandler(filters.TEXT & ~filters.COMMAND, toggle_sell)],
+            TOGGLE_BUY: [CallbackQueryHandler(toggle_buy, pattern='^toggle_buy$')],
+            TOGGLE_SELL: [CallbackQueryHandler(toggle_sell, pattern='^toggle_sell$')],
             SET_ADMIN_BANK_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_admin_bank_info)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         per_user=True,
     )
 
-    # تعریف ConversationHandler برای ادمین‌ها
-    admin_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(approve_transaction, pattern='^(approve|reject)_user_\d+$')],
-        states={
-            # هیچ حالت خاصی برای ادمین‌ها در اینجا نیاز نیست
-        },
-        fallbacks=[],
-        per_user=True,
-    )
-
-    admin_final_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_final_confirm_transaction, pattern='^(complete|cancel)_transaction_\d+$')],
-        states={
-            # هیچ حالت خاصی برای ادمین‌ها در اینجا نیاز نیست
-        },
-        fallbacks=[],
-        per_user=True,
-    )
-
     # اضافه کردن ConversationHandlerها به application
     application.add_handler(user_conv_handler)
-    application.add_handler(admin_conv_handler)
-    application.add_handler(admin_final_conv_handler)
 
-    # اضافه کردن هندلر خطا به اپلیکیشن
-    application.add_error_handler(error_handler)
+    # اضافه کردن هندلرهای منوی اصلی
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu_handler))
+
+    # اضافه کردن هندلرهای پنل مدیریت
+    application.add_handler(CallbackQueryHandler(manage_users, pattern='^manage_users$'))
+    application.add_handler(CallbackQueryHandler(set_rates, pattern='^set_rates$'))
+    application.add_handler(CallbackQueryHandler(manage_buy_sell, pattern='^manage_buy_sell$'))
+    application.add_handler(CallbackQueryHandler(set_admin_bank_info_handler, pattern='^set_admin_bank_info$'))
+    application.add_handler(CallbackQueryHandler(back_to_main, pattern='^back_to_main$'))
+    application.add_handler(CallbackQueryHandler(set_buy_rate_handler, pattern='^set_buy_rate$'))
+    application.add_handler(CallbackQueryHandler(set_sell_rate_handler, pattern='^set_sell_rate$'))
+    application.add_handler(CallbackQueryHandler(set_admin_iran_bank, pattern='^set_admin_iran_bank$'))
+    application.add_handler(CallbackQueryHandler(set_admin_turkey_bank, pattern='^set_admin_turkey_bank$'))
+    application.add_handler(CallbackQueryHandler(approve_transaction, pattern='^(approve|reject)_user_\d+$'))
 
     # اضافه کردن CallbackQueryHandler برای ارسال فیش پرداخت
     application.add_handler(CallbackQueryHandler(send_payment_proof_handler, pattern='^send_payment_proof_\d+$'))
@@ -1302,11 +1338,37 @@ def main():
     # اضافه کردن هندلر ارسال فیش واریز توسط کاربر
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_admin_payment_proof))
 
-    # اضافه کردن هندلر تایید نهایی تراکنش توسط ادمین
+    # اضافه کردن CallbackQueryHandler برای تایید نهایی تراکنش توسط ادمین
     application.add_handler(CallbackQueryHandler(admin_final_confirm_transaction, pattern='^(complete|cancel)_transaction_\d+$'))
+
+    # اضافه کردن هندلر خطا به اپلیکیشن
+    application.add_error_handler(error_handler)
 
     # شروع polling
     application.run_polling()
+
+# هندلر بازگشت به پنل مدیریت
+async def back_to_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='manage_users')],
+        [InlineKeyboardButton("📈 تنظیم نرخ‌ها", callback_data='set_rates')],
+        [InlineKeyboardButton("🔄 مدیریت خرید و فروش", callback_data='manage_buy_sell')],
+        [InlineKeyboardButton("📋 تنظیم اطلاعات بانکی ادمین", callback_data='set_admin_bank_info')],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("⚙️ **پنل مدیریت:**", reply_markup=reply_markup)
+    return ConversationHandler.END
+
+# هندلر بازگشت به منوی اصلی از پنل مدیریت
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📂 به منوی اصلی خوش آمدید.", reply_markup=ReplyKeyboardRemove())
+    await main_menu(update, context)
+    return ConversationHandler.END
 
 if __name__ == '__main__':
     main()
