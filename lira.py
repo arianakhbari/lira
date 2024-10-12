@@ -25,8 +25,7 @@ from sqlalchemy import (
     Float,
     Boolean
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 # تنظیمات لاگینگ
 logging.basicConfig(
@@ -36,8 +35,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # توکن ربات و آیدی‌های ادمین‌ها از متغیرهای محیطی خوانده می‌شوند
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')  # توصیه می‌شود از متغیرهای محیطی استفاده کنید
-ADMIN_IDS = [int(admin_id) for admin_id in os.getenv('ADMIN_IDS', '').split(',') if admin_id.isdigit()]
+TOKEN = 'TELEGRAM_BOT_TOKEN'  # توصیه می‌شود از متغیرهای محیطی استفاده کنید
+ADMIN_IDS = [YOUR_ADMIN_ID]
 
 # تنظیمات دیتابیس
 engine = create_engine('sqlite:///bot.db', connect_args={'check_same_thread': False})
@@ -103,7 +102,7 @@ Base.metadata.create_all(engine)
 
     # مراحل تنظیمات ادمین
     SET_BUY_RATE, SET_SELL_RATE, TOGGLE_BUY, TOGGLE_SELL, SET_ADMIN_BANK_INFO
-) = range(19)
+) = range(18)  # تغییر از range(19) به range(18)
 
 def is_admin(user_id):
     return user_id in ADMIN_IDS
