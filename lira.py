@@ -1380,4 +1380,3 @@ async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TY
     
     if __name__ == '__main__':
         asyncio.run(main())
-    ```
