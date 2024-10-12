@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from telegram import (
     Update,
     KeyboardButton,
@@ -35,8 +36,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # توکن ربات و آیدی‌های ادمین‌ها از متغیرهای محیطی خوانده می‌شوند
-TOKEN = 'TELEGRAM_BOT_TOKEN'  # توصیه می‌شود از متغیرهای محیطی استفاده کنید
-ADMIN_IDS = [YOUR_ADMIN_ID]
+TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'  # جایگزین با توکن ربات خود
+ADMIN_IDS = [123456789, 987654321]  # جایگزین با آیدی‌های ادمین‌ها
 
 # تنظیمات دیتابیس
 engine = create_engine('sqlite:///bot.db', connect_args={'check_same_thread': False})
@@ -186,7 +187,7 @@ async def get_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return PHONE
 
-# دریافت شماره تلفن
+# دریافت شماره تلفن با اصلاحات
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
     if not contact:
@@ -199,13 +200,19 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         return PHONE
-    phone_number = contact.phone_number.strip()
-    # اعتبارسنجی شماره تلفن (مثلاً بررسی طول یا فرمت)
-    if not phone_number.isdigit() or len(phone_number) < 10 or len(phone_number) > 15:
+
+    # حذف کاراکترهای غیرعددی
+    phone_number = ''.join(filter(str.isdigit, contact.phone_number))
+    logger.info(f"Received phone number: {contact.phone_number}")
+    logger.info(f"Sanitized phone number: {phone_number}")
+
+    # اعتبارسنجی شماره تلفن
+    if not phone_number or len(phone_number) < 10 or len(phone_number) > 15:
         await update.message.reply_text(
             "⚠️ شماره تلفن نامعتبر است. لطفاً یک شماره تلفن معتبر ارسال کنید:"
         )
         return PHONE
+
     context.user_data['phone'] = phone_number
     await update.message.reply_text(
         "📄 لطفاً تصویر کارت ملی یا پاسپورت خود را ارسال کنید:",
@@ -992,6 +999,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ شما دسترسی لازم برای انجام این عمل را ندارید.")
         return ConversationHandler.END
     keyboard = [
+       
         ["👥 مدیریت کاربران"],
         ["📈 تنظیم نرخ‌ها"],
         ["🔄 مدیریت خرید و فروش"],
