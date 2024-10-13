@@ -1,19 +1,21 @@
 # handlers/user_handlers.py
+import os
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
     MessageHandler,
     filters,
+    ConversationHandler,
 )
 from models import User
-from config import ADMIN_IDS
-import logging
+from utils.helpers import sanitize_phone_number
 
 logger = logging.getLogger(__name__)
 
-# تعریف حالات ConversationHandler برای ثبت‌نام (اگر نیاز دارید)
-NAME, FAMILY_NAME, COUNTRY, PHONE, ID_CARD = range(5)
+# تعریف Enum برای حالت‌های ConversationHandler
+TERMS, NAME, FAMILY_NAME, COUNTRY, PHONE, ID_CARD = range(6)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -38,6 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
+    return TERMS
 
 async def terms_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -56,24 +59,34 @@ async def terms_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user.has_accepted_terms = True
             db.commit()
             await query.edit_message_text("✅ شما شرایط و قوانین را پذیرفتید.\nخوش آمدید! لطفاً فرآیند ثبت‌نام را ادامه دهید.")
-            # شروع فرآیند ثبت‌نام
-            keyboard = [
-                [InlineKeyboardButton("شروع ثبت‌نام", callback_data='start_registration')],
-                [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='return_to_main')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text(
-                "برای شروع ثبت‌نام، روی گزینه زیر کلیک کنید.",
-                reply_markup=reply_markup
-            )
-            return NAME  # مرحله بعدی ConversationHandler شما
         else:
-            # اگر کاربر یافت نشد، ممکن است بخواهید او را اضافه کنید
-            await query.edit_message_text("⚠️ خطا در یافتن اطلاعات شما. لطفاً دوباره تلاش کنید.")
-            return ConversationHandler.END
+            # اگر کاربر یافت نشد، ایجاد یک کاربر جدید با پذیرش شرایط
+            new_user = User(
+                telegram_id=user_id,
+                name="",
+                family_name="",
+                country="",
+                phone="",
+                id_card="",
+                is_verified=False,
+                has_accepted_terms=True
+            )
+            db.add(new_user)
+            db.commit()
+            await query.edit_message_text("✅ شما شرایط و قوانین را پذیرفتید.\nخوش آمدید! لطفاً فرآیند ثبت‌نام را ادامه دهید.")
+        # شروع فرآیند ثبت‌نام
+        keyboard = [
+            [InlineKeyboardButton("شروع ثبت‌نام", callback_data='start_registration')],
+            [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data='return_to_main')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text(
+            "برای شروع ثبت‌نام، روی گزینه زیر کلیک کنید.",
+            reply_markup=reply_markup
+        )
+        return NAME  # مرحله بعدی ConversationHandler
     elif data == 'decline_terms':
         await query.edit_message_text("❌ شما شرایط و قوانین را پذیرفتن نکردید. متأسفانه نمی‌توانید از ربات استفاده کنید.")
-        # اختیاری: حذف کاربر یا محدود کردن دسترسی
         return ConversationHandler.END
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
