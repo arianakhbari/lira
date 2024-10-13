@@ -2,7 +2,7 @@
 import os
 
 # توکن ربات تلگرام
-TOKEN = os.getenv('TOKEN', 'YOUR_TELEGRAM_BOT_TOKEN')
+TOKEN = '7732549586:AAH3XpSaeY8m3BTzhCVZGlEJzwGz-okLmos'
 
 # آیدی‌های ادمین‌ها (لیست اعداد)
 ADMIN_IDS = [179044957]  # جایگزین با آیدی‌های ادمین‌ها
