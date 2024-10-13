@@ -76,11 +76,11 @@ def main():
     user_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
-            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
-            3: [MessageHandler(filters.CONTACT, get_phone)],
-            4: [MessageHandler(filters.PHOTO & ~filters.COMMAND, get_id_card)],
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            FAMILY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
+            COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
+            PHONE: [MessageHandler(filters.CONTACT, get_phone)],
+            ID_CARD: [MessageHandler(filters.PHOTO & ~filters.COMMAND, get_id_card)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         per_user=True,
