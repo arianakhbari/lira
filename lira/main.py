@@ -76,11 +76,12 @@ def main():
     user_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            FAMILY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
-            COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
-            PHONE: [MessageHandler(filters.CONTACT, get_phone)],
-            ID_CARD: [MessageHandler(filters.PHOTO & ~filters.COMMAND, get_id_card)],
+            0: [CallbackQueryHandler(terms_callback, pattern='^(accept_terms|decline_terms)$')],
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
+            3: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
+            4: [MessageHandler(filters.CONTACT, get_phone)],
+            5: [MessageHandler(filters.PHOTO & ~filters.COMMAND, get_id_card)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         per_user=True,
@@ -96,15 +97,15 @@ def main():
     transaction_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('buy', initiate_transaction), CommandHandler('sell', initiate_transaction)],
         states={
-            SELECT_TRANSACTION_TYPE: [CallbackQueryHandler(select_transaction_type, pattern='^(buy|sell)$')],
-            TRANSACTION_AMOUNT_TYPE: [CallbackQueryHandler(select_amount_type, pattern='^(toman|lira)$')],
-            AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)],
-            CONFIRM_TRANSACTION: [
+            0: [CallbackQueryHandler(select_transaction_type, pattern='^(buy|sell)$')],
+            1: [CallbackQueryHandler(select_amount_type, pattern='^(toman|lira)$')],
+            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)],
+            3: [
                 CallbackQueryHandler(confirm_transaction_handler, pattern='^confirm_transaction$'),
                 CallbackQueryHandler(cancel_transaction_handler, pattern='^cancel$'),
                 CallbackQueryHandler(return_to_main, pattern='^return_to_main$')
             ],
-            SEND_PAYMENT_PROOF: [CallbackQueryHandler(send_payment_proof_handler, pattern='^send_payment_proof_\d+$')],
+            4: [CallbackQueryHandler(send_payment_proof_handler, pattern='^send_payment_proof_\d+$')],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         per_user=True,
@@ -116,7 +117,7 @@ def main():
     payment_proof_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_payment_proof)],
         states={
-            SEND_PAYMENT_PROOF: [MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_payment_proof)]
+            0: [MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_payment_proof)]
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         per_user=True,
@@ -128,7 +129,8 @@ def main():
     application.add_handler(CallbackQueryHandler(return_to_main, pattern='^return_to_main$'))
 
     # اضافه کردن هندلرهای شرایط و قوانین
-    application.add_handler(CallbackQueryHandler(terms_callback, pattern='^(accept_terms|decline_terms)$'))
+    # در این نسخه، ConversationHandler برای کاربران ابتدا به مرحله TERMS (0) می‌رود
+    # و پس از پذیرش یا رد شرایط، به مراحل بعدی می‌پردازد.
 
     # هندلر خطاها
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
