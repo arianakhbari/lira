@@ -42,9 +42,9 @@ async def initiate_transaction(update: Update, context: ContextTypes.DEFAULT_TYP
     db = context.bot_data['db']
     user = db.query(User).filter_by(telegram_id=user_id).first()
     
-    if not user or not user.is_verified:
+    if not user or not user.is_verified or not user.has_accepted_terms:
         await update.message.reply_text(
-            "❌ شما هنوز ثبت‌نام نکرده‌اید یا حساب شما تأیید نشده است."
+            "❌ شما هنوز ثبت‌نام نکرده‌اید، حساب شما تأیید نشده است یا شرایط و قوانین را پذیرفته‌اید."
         )
         return ConversationHandler.END
     
@@ -110,7 +110,7 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     دریافت مبلغ تراکنش از کاربر و محاسبه مبلغ کل.
     """
     amount_text = update.message.text.strip()
-    if not amount_text.isdigit():
+    if not amount_text.replace('.', '', 1).isdigit():
         await update.message.reply_text("⚠️ لطفاً فقط از اعداد استفاده کنید. دوباره تلاش کنید:")
         return AMOUNT
     
