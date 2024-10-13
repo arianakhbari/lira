@@ -1,5 +1,6 @@
 # main.py
 import logging
+import os
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -15,6 +16,7 @@ from database import engine, Base, SessionLocal
 from models import User, BankAccount, Transaction, Settings
 from handlers.user_handlers import (
     start,
+    terms_callback,
     get_name,
     get_family_name,
     get_country,
@@ -36,9 +38,11 @@ from handlers.transaction_handlers import (
     send_payment_proof_handler,
     receive_payment_proof
 )
-import os
 
 # تنظیمات لاگینگ
+if not os.path.exists(os.path.dirname(LOG_FILE)):
+    os.makedirs(os.path.dirname(LOG_FILE))
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -72,19 +76,21 @@ def main():
     user_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            # حالت‌های ثبت‌نام کاربران
-            # NAME, FAMILY_NAME, COUNTRY, PHONE, ID_CARD
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            FAMILY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
-            COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
-            PHONE: [MessageHandler(filters.CONTACT, get_phone)],
-            ID_CARD: [MessageHandler(filters.PHOTO & ~filters.COMMAND, get_id_card)],
+            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
+            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_country)],
+            3: [MessageHandler(filters.CONTACT, get_phone)],
+            4: [MessageHandler(filters.PHOTO & ~filters.COMMAND, get_id_card)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         per_user=True,
         per_chat=True
     )
     application.add_handler(user_conv_handler)
+
+    # اضافه کردن هندلرهای ادمین‌ها
+    application.add_handler(CallbackQueryHandler(approve_or_reject_user, pattern='^(approve|reject)_user_\d+$'))
+    application.add_handler(CallbackQueryHandler(approve_or_reject_payment, pattern='^(approve|reject)_payment_\d+$'))
 
     # اضافه کردن ConversationHandler برای تراکنش‌ها
     transaction_conv_handler = ConversationHandler(
@@ -107,15 +113,22 @@ def main():
     application.add_handler(transaction_conv_handler)
 
     # اضافه کردن ConversationHandler برای فیش پرداخت
-    # در نسخه بهبود یافته، این قسمت نیاز به حذف دارد چون تمام مراحل در transaction_conv_handler مدیریت می‌شوند.
-    # بنابراین این بخش را حذف می‌کنیم.
+    payment_proof_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_payment_proof)],
+        states={
+            SEND_PAYMENT_PROOF: [MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_payment_proof)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+        per_user=True,
+        per_chat=True
+    )
+    application.add_handler(payment_proof_handler)
 
     # اضافه کردن هندلر برای بازگشت به منوی اصلی
     application.add_handler(CallbackQueryHandler(return_to_main, pattern='^return_to_main$'))
 
-    # اضافه کردن هندلرهای ادمین‌ها
-    application.add_handler(CallbackQueryHandler(approve_or_reject_user, pattern='^(approve|reject)_user_\d+$'))
-    application.add_handler(CallbackQueryHandler(approve_or_reject_payment, pattern='^(approve|reject)_payment_\d+$'))
+    # اضافه کردن هندلرهای شرایط و قوانین
+    application.add_handler(CallbackQueryHandler(terms_callback, pattern='^(accept_terms|decline_terms)$'))
 
     # هندلر خطاها
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
